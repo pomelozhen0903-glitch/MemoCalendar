@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html class="dark">
+<head>
+  <base target="_top">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { dark: { 900: '#121212', 800: '#1e1e1e', 700: '#2d2d2d' } } } }
+    }
+  </script>
+  <style>
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .glass-dark { background: rgba(30, 30, 30, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .note-card { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); border: 2px solid transparent; }
+    
+    /* V19: 選取樣式改回藍色系 (不刺眼) */
+    .selected-card { border-color: #3b82f6 !important; background-color: #eff6ff !important; transform: scale(0.98); }
+    .dark .selected-card { border-color: #60a5fa !important; background-color: #1e3a8a !important; }
+    
+    .check-badge { display: none; }
+    .selected-card .check-badge { display: flex; }
+    input[type="time"], input[type="date"] { background: transparent; width: 100%; }
+    .no-select { -webkit-user-select: none; user-select: none; }
+    
+    #toast-container { position: fixed; top: 1.5rem; left: 50%; transform: translateX(-50%) translateY(-150%); z-index: 100; transition: transform 0.4s; width: 90%; max-width: 380px; }
+    #toast-container.show { transform: translateX(-50%) translateY(0); }
+    .toast-icon { width: 2.5rem; height: 2.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; margin-right: 0.75rem; flex-shrink: 0; }
+    
+    .alarm-popup { animation: bounceIn 0.5s; }
+    @keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+    
+    .mic-active { animation: pulse-red 1.5s infinite; background: #ef4444 !important; }
+    @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+  </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden bg-gray-50 dark:bg-dark-900 text-gray-800 dark:text-gray-100 transition-colors duration-300 font-sans no-select">
+
+  <div id="toast-container" class="flex items-center p-3 rounded-2xl shadow-2xl glass-dark border border-white/10 backdrop-blur-md">
+      <div id="toast-icon" class="toast-icon bg-green-500"><i class="fas fa-check"></i></div>
+      <div><h4 id="toast-title" class="font-bold text-sm">通知</h4><p id="toast-msg" class="text-xs opacity-80">...</p></div>
+  </div>
+
+  <audio id="alarm-sound" loop>
+    <source src="https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg" type="audio/ogg">
+  </audio>
+
+  <header class="pt-10 pb-3 px-5 glass-dark z-30 sticky top-0 flex justify-between items-center">
+    <div class="flex items-center gap-2">
+       <div class="w-2 h-8 bg-blue-500 rounded-full"></div>
+       <h1 class="text-xl font-bold tracking-tight">VoicePro <span class="text-blue-500 text-xs">V18</span></h1>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="toggleSort()" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-dark-700 flex items-center justify-center transition hover:bg-gray-300"><i class="fas fa-sort-amount-down"></i></button>
+      <button onclick="toggleShowDone()" id="btn-show-done" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-dark-700 flex items-center justify-center transition"><i class="fas fa-check-double"></i></button>
+      <button onclick="toggleTheme()" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-dark-700 flex items-center justify-center transition"><i id="theme-icon" class="fas fa-sun"></i></button>
+    </div>
+  </header>
+
+  <div class="px-4 py-2 bg-white dark:bg-dark-900 z-20">
+    <div class="relative">
+      <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+      <input type="text" id="search-input" onkeyup="filterNotes()" placeholder="搜尋..." class="w-full bg-gray-100 dark:bg-dark-800 text-gray-800 dark:text-white rounded-xl py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+    </div>
+  </div>
+
+  <div id="notes-container" class="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-40">
+    <div id="loading" class="text-center py-20 opacity-50"><i class="fas fa-spinner fa-spin text-2xl"></i></div>
+  </div>
+
+  <div id="batch-bar" class="fixed bottom-32 left-4 right-4 z-40 hidden transition-all duration-300 transform translate-y-20 opacity-0">
+    <div class="bg-gray-800 text-white rounded-2xl p-4 shadow-2xl flex justify-between items-center border border-gray-700">
+        <span class="font-bold ml-2 text-lg"><i class="fas fa-check-square mr-2 text-blue-400"></i>已選 <span id="selected-count">0</span></span>
+        <div class="flex gap-3">
+            <button onclick="exitSelectionMode()" class="px-4 py-2 bg-gray-700 rounded-xl text-sm font-medium hover:bg-gray-600">取消</button>
+            <button onclick="deleteSelected()" class="px-6 py-2 bg-red-600 text-white rounded-xl font-bold text-sm shadow-md hover:bg-red-700 flex items-center"><i class="fas fa-trash-alt mr-2"></i>刪除</button>
+        </div>
+    </div>
+  </div>
+
+  <div class="fixed bottom-0 w-full p-5 pointer-events-none flex justify-center items-end gap-4 h-32 bg-gradient-to-t from-gray-100 via-gray-100/90 to-transparent dark:from-dark-900 dark:via-dark-900/95 z-10">
+    <button onclick="unlockAudio(); openNewNote()" class="pointer-events-auto w-12 h-12 rounded-full bg-gray-200 dark:bg-dark-700 text-gray-600 dark:text-gray-200 shadow-lg flex items-center justify-center transition hover:scale-110 active:scale-95"><i class="fas fa-keyboard text-lg"></i></button>
+    <button id="mic-btn" onclick="unlockAudio()" class="pointer-events-auto w-16 h-16 rounded-full bg-blue-600 text-white shadow-xl shadow-blue-500/30 flex items-center justify-center text-2xl transition hover:scale-105 active:scale-95"><i class="fas fa-microphone"></i></button>
+    <div class="w-12"></div>
+  </div>
+
+  <div id="edit-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-dark-800 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden transform scale-95 opacity-0 transition-all" id="edit-content">
+      <div class="p-5 space-y-4">
+        <div class="flex justify-between items-center">
+            <h3 class="text-lg font-bold dark:text-white" id="modal-title">編輯筆記</h3>
+            <button onclick="closeEditModal()" class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-dark-700 flex items-center justify-center text-gray-500"><i class="fas fa-times"></i></button>
+        </div>
+        <input type="text" id="edit-title" class="w-full bg-gray-50 dark:bg-dark-700 dark:text-white p-3 rounded-xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-lg" placeholder="標題">
+        <div class="grid grid-cols-[1.8fr_1.4fr_0.8fr] gap-2 items-center bg-gray-50 dark:bg-dark-700 rounded-xl p-2">
+             <input type="date" id="edit-date" class="dark:text-white text-sm h-10 border-none focus:ring-0 px-1">
+             <input type="time" id="edit-time" class="dark:text-white text-sm h-10 border-none focus:ring-0 px-1 text-center">
+             <button onclick="setNow()" class="h-8 bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300 rounded-lg text-xs font-bold hover:opacity-80 transition flex items-center justify-center">NOW</button>
+        </div>
+        <div class="flex gap-2">
+             <select id="edit-priority" class="flex-1 bg-gray-50 dark:bg-dark-700 dark:text-white p-2 rounded-lg text-sm h-10 border-none"><option value="High">🔴 高優先</option><option value="Normal" selected>🟡 一般</option><option value="Low">🟢 低優先</option></select>
+             <button id="btn-pin" onclick="togglePinState()" class="px-3 bg-gray-50 dark:bg-dark-700 rounded-lg text-gray-400 hover:text-blue-500 h-10"><i class="fas fa-thumbtack"></i></button>
+        </div>
+        <textarea id="edit-remarks" rows="2" placeholder="備註..." class="w-full bg-gray-50 dark:bg-dark-700 dark:text-white p-3 rounded-xl border-none text-sm"></textarea>
+        <input type="hidden" id="edit-id">
+        <button onclick="saveEdit()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-blue-700 transition">儲存 (Enter)</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="calendar-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] hidden flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-dark-800 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden transform scale-95 opacity-0 transition-all" id="calendar-content">
+      <div class="p-6 space-y-4">
+        <h3 class="text-lg font-bold dark:text-white flex items-center"><i class="fab fa-google text-blue-500 mr-2"></i> 加入行事曆</h3>
+        
+        <select id="cal-select" class="w-full bg-gray-50 dark:bg-dark-700 dark:text-white p-3 rounded-xl border-none focus:ring-2 focus:ring-blue-500 mb-2">
+            <option value="">載入中...</option>
+        </select>
+
+        <div class="space-y-3">
+            <div>
+                <div class="flex justify-between mb-1"><label class="text-xs text-gray-500 font-bold">開始時間</label><button onclick="setNow('cal')" class="text-xs text-blue-500 font-bold">NOW</button></div>
+                <div class="flex gap-2">
+                    <input type="date" id="cal-date" class="flex-1 bg-gray-50 dark:bg-dark-700 dark:text-white p-2 rounded-xl text-sm">
+                    <input type="time" id="cal-time" onchange="autoSetEndTime()" class="w-24 bg-gray-50 dark:bg-dark-700 dark:text-white p-2 rounded-xl text-sm">
+                </div>
+            </div>
+            <div>
+                <label class="text-xs text-gray-500 font-bold mb-1 block">結束時間 (到幾點)</label>
+                <input type="time" id="cal-end-time" class="w-full bg-gray-50 dark:bg-dark-700 dark:text-white p-2 rounded-xl text-sm">
+            </div>
+        </div>
+        
+        <input type="hidden" id="cal-title">
+
+        <div class="grid grid-cols-2 gap-3 pt-4">
+            <button onclick="closeCalendarModal()" class="py-3 bg-gray-100 dark:bg-dark-700 text-gray-600 dark:text-gray-300 rounded-xl font-medium">取消</button>
+            <button onclick="confirmAddToCalendar()" class="py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700">確認加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="alarm-modal" class="fixed inset-0 bg-red-500/80 backdrop-blur-sm z-[60] hidden flex items-center justify-center p-4">
+    <div class="alarm-popup bg-white dark:bg-dark-800 w-full max-w-sm rounded-3xl shadow-2xl p-8 text-center border-4 border-red-500">
+        <div class="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce"><i class="fas fa-bell text-4xl"></i></div>
+        <h2 class="text-2xl font-black text-gray-900 dark:text-white mb-2">時間到！</h2>
+        <p id="alarm-message" class="text-xl text-gray-600 dark:text-gray-300 font-medium mb-8">提醒</p>
+        <button onclick="stopAlarm()" class="w-full bg-red-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-red-600 active:scale-95 transition">我知道了</button>
+    </div>
+  </div>
+
+  <script>
+    let recognition; let isRecording = false; let notesData = []; let showDone = false;
+    let isPinnedState = false; let sortType = 'DATE'; let isSelectionMode = false;
+    let selectedIds = new Set(); let longPressTimer; let remindedIds = new Set();
+    const alarmSound = document.getElementById('alarm-sound');
+    let userCalendars = [];
+
+    window.onload = function() {
+      if(localStorage.getItem('theme') === 'light') toggleThemeUI(false);
+      loadNotes(); initSpeech(); setupGlobalKeys();
+      if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
+      setInterval(checkAlarm, 5000); 
+      google.script.run.withSuccessHandler(cals => { userCalendars = cals; }).getUserCalendars();
+    };
+
+    function showToast(title, msg, type='success') {
+        const c = document.getElementById('toast-container');
+        document.getElementById('toast-title').innerText = title;
+        document.getElementById('toast-msg').innerText = msg;
+        const icon = document.getElementById('toast-icon');
+        if(type==='success'){ icon.className='toast-icon bg-green-500'; icon.innerHTML='<i class="fas fa-check"></i>'; }
+        else { icon.className='toast-icon bg-red-500'; icon.innerHTML='<i class="fas fa-exclamation"></i>'; }
+        c.classList.add('show'); setTimeout(()=>c.classList.remove('show'), 3000);
+    }
+
+    function loadNotes() {
+      google.script.run.withSuccessHandler(data => { notesData = data; renderList(); if(data.length===0) showToast("歡迎","目前沒有筆記",'success'); })
+        .withFailureHandler(err => showToast("錯誤",err.message,'error')).getNotes();
+    }
+
+    // --- V18 RenderList: 右側按鈕 + 時間靠右 ---
+    function renderList() {
+        const container = document.getElementById('notes-container');
+        document.getElementById('loading')?.remove();
+        container.innerHTML = '';
+        const search = document.getElementById('search-input').value.toLowerCase();
+        let filtered = notesData.filter(n => (!showDone && n.isDone) ? false : (n.title.toLowerCase().includes(search) || n.originalText.toLowerCase().includes(search)));
+        
+        filtered.sort((a, b) => {
+            if (a.isDone !== b.isDone) return a.isDone ? 1 : -1;
+            if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+            if (sortType === 'DATE') return b.timestamp - a.timestamp;
+            const pMap = { 'High': 3, 'Normal': 2, 'Low': 1 };
+            return pMap[b.priority] - pMap[a.priority];
+        });
+
+        filtered.forEach(note => {
+            const isDoneClass = note.isDone ? 'opacity-50 grayscale' : '';
+            const isSelected = selectedIds.has(note.id.toString()) ? 'selected-card' : '';
+            const pColor = note.priority === 'High' ? 'bg-red-500' : (note.priority === 'Low' ? 'bg-green-500' : 'bg-transparent');
+            const pinIcon = note.isPinned ? '<i class="fas fa-thumbtack text-blue-500 mr-2 text-xs"></i>' : '';
+            
+            // V18: 格式化顯示時間 YYYY/MM/DD HH:mm
+            let timeDisplay = "";
+            if (note.displayDate && note.timeStr) {
+                timeDisplay = `${note.displayDate} ${note.timeStr}`;
+            } else if (note.timeStr) {
+                timeDisplay = note.timeStr;
+            }
+            
+            const div = document.createElement('div');
+            div.className = `note-card bg-white dark:bg-dark-800 rounded-2xl p-4 shadow-sm relative overflow-hidden ${isDoneClass} ${isSelected} flex items-center gap-3`;
+            
+            div.oncontextmenu = (e) => { e.preventDefault(); toggleSelection(note.id.toString()); };
+            div.onmousedown = () => startLongPress(note.id); div.ontouchstart = () => startLongPress(note.id);
+            div.onmouseup = cancelLongPress; div.ontouchend = cancelLongPress; div.ontouchmove = cancelLongPress;
+            div.onclick = (e) => handleCardClick(e, note);
+
+            if(note.priority !== 'Normal' && !note.isDone) div.innerHTML += `<div class="absolute left-0 top-0 bottom-0 w-1 ${pColor}"></div>`;
+            div.innerHTML += `<div class="check-badge absolute bottom-0 right-0 bg-blue-500 text-white rounded-tl-xl px-2 py-1 z-10 shadow-md"><i class="fas fa-check text-xs"></i></div>`;
+            
+            div.innerHTML += `
+                <button onclick="event.stopPropagation(); toggleDone('${note.id}')" class="text-xl flex-shrink-0 z-20 transition active:scale-90">
+                   ${note.isDone ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="far fa-circle text-gray-400 dark:text-gray-600"></i>'}
+                </button>
+                
+                <div class="flex-1 overflow-hidden flex flex-col justify-center">
+                    <h3 class="font-bold text-gray-900 dark:text-gray-100 leading-tight truncate text-base">${pinIcon}${note.title}</h3>
+                    ${note.remarks ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate"><i class="fas fa-sticky-note mr-1 text-[10px]"></i>${note.remarks}</p>` : ''}
+                </div>
+
+                <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                    ${timeDisplay ? `<span class="text-[10px] bg-gray-100 dark:bg-dark-700 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-md whitespace-nowrap font-mono ml-1">${timeDisplay}</span>` : ''}
+                    <div class="flex gap-2 z-20">
+                        <button onclick="openCalendarModal(event, '${note.id}')" class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition"><i class="fab fa-google text-lg"></i></button>
+                        <button onclick="quickAddApple(event, '${note.id}')" class="text-gray-400 hover:text-black dark:hover:text-white transition"><i class="fab fa-apple text-lg"></i></button>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // --- V18: Enhanced Calendar Modal ---
+    function openCalendarModal(e, id) {
+        e.stopPropagation();
+        const note = notesData.find(n => n.id.toString() === id.toString());
+        if(!note) return;
+
+        document.getElementById('cal-title').value = note.title;
+        
+        // 繼承時間
+        const dStr = note.dateStr ? note.dateStr.replace(/\//g, '-') : new Date().toISOString().split('T')[0];
+        document.getElementById('cal-date').value = dStr;
+        document.getElementById('cal-time').value = note.timeStr || new Date().toTimeString().slice(0,5);
+        autoSetEndTime(); // 自動計算結束時間
+
+        const select = document.getElementById('cal-select');
+        select.innerHTML = '';
+        if(userCalendars.length > 0) {
+            userCalendars.forEach(cal => {
+                const opt = document.createElement('option');
+                opt.value = cal.id; opt.innerText = cal.name;
+                if(cal.isPrimary) opt.selected = true;
+                select.appendChild(opt);
+            });
+        } else select.innerHTML = '<option value="">預設行事曆</option>';
+
+        const modal = document.getElementById('calendar-modal');
+        modal.classList.remove('hidden');
+        setTimeout(() => { 
+            document.getElementById('calendar-content').classList.remove('scale-95', 'opacity-0');
+            document.getElementById('calendar-content').classList.add('scale-100', 'opacity-100');
+        }, 10);
+    }
+
+    function autoSetEndTime() {
+        const t = document.getElementById('cal-time').value;
+        if(t) {
+            const [h, m] = t.split(':').map(Number);
+            const nextH = (h + 1) % 24;
+            document.getElementById('cal-end-time').value = `${nextH.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+        }
+    }
+
+    function confirmAddToCalendar() {
+        const title = document.getElementById('cal-title').value;
+        const date = document.getElementById('cal-date').value;
+        const time = document.getElementById('cal-time').value;
+        const endTime = document.getElementById('cal-end-time').value;
+        const calId = document.getElementById('cal-select').value;
+
+        document.getElementById('calendar-content').classList.remove('scale-100', 'opacity-100');
+        setTimeout(() => document.getElementById('calendar-modal').classList.add('hidden'), 200);
+        showToast("處理中...", "正在加入行程");
+        
+        google.script.run.withSuccessHandler(r => showToast(r.success?"成功":"失敗", r.msg, r.success?'success':'error'))
+             .addToGoogleCalendar(title, date, time, endTime, calId);
+    }
+    
+    function closeCalendarModal() {
+        document.getElementById('calendar-content').classList.remove('scale-100', 'opacity-100');
+        setTimeout(() => document.getElementById('calendar-modal').classList.add('hidden'), 200);
+    }
+
+    // --- Helpers ---
+    function setNow(mode) { 
+        const n=new Date(); 
+        const p=x=>x.toString().padStart(2,'0'); 
+        const dStr=`${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}`; 
+        const tStr=`${p(n.getHours())}:${p(n.getMinutes())}`;
+        
+        if(mode === 'edit') {
+            document.getElementById('edit-date').value = dStr;
+            document.getElementById('edit-time').value = tStr;
+        } else if (mode === 'cal') {
+            document.getElementById('cal-date').value = dStr;
+            document.getElementById('cal-time').value = tStr;
+            autoSetEndTime();
+        }
+    }
+
+    function quickAddApple(e, id) {
+        e.stopPropagation();
+        const note = notesData.find(n => n.id.toString() === id.toString());
+        if(note) { openEditModal(note); showToast("提示", "確認後點擊 Apple 下載", 'success'); }
+    }
+
+    // ... [Core Logic] ...
+    function initSpeech() { if(!('webkitSpeechRecognition' in window)) return; recognition=new webkitSpeechRecognition(); recognition.lang='zh-TW'; recognition.onstart=()=>{document.getElementById('mic-btn').classList.add('mic-active');isRecording=true;}; recognition.onend=()=>{document.getElementById('mic-btn').classList.remove('mic-active');isRecording=false;}; recognition.onresult=(e)=>{const t=e.results[0][0].transcript; if(t) saveVoice(t);}; document.getElementById('mic-btn').onclick=()=>isRecording?recognition.stop():recognition.start(); }
+    function saveVoice(t) { unlockAudio(); const id=Date.now(); notesData.unshift({id,title:t,originalText:t,displayDate:'',priority:'Normal',isDone:false,timestamp:id}); renderList(); const nowStr = new Date().toLocaleString('en-US', { hour12: false }); google.script.run.withSuccessHandler(n=>{ const idx=notesData.findIndex(x=>x.id===id); if(idx!==-1) notesData[idx]=n; renderList(); if(document.getElementById('edit-id').value==id) openEditModal(n); if(n.autoCal) showToast("語音紀錄成功", "🔔 已自動同步至行事曆", 'success'); else showToast("語音紀錄成功", "已儲存", 'success'); }).processVoiceNote(t, nowStr); }
+    function saveEdit() { const id=document.getElementById('edit-id').value;const isNew=id==='';const d={id:isNew?Date.now().toString():id,title:document.getElementById('edit-title').value||'未命名',dateStr:document.getElementById('edit-date').value,timeStr:document.getElementById('edit-time').value,priority:document.getElementById('edit-priority').value,remarks:document.getElementById('edit-remarks').value,isPinned:isPinnedState,isDone:false,originalText:isNew?document.getElementById('edit-title').value:'',timestamp:Date.now()}; if(isNew){notesData.unshift(d);renderList();google.script.run.withSuccessHandler(n=>{const i=notesData.findIndex(x=>x.id===d.id);if(i!==-1){notesData[i]={...n,...d,id:n.id};renderList();}}).addManualNote(d);}else{const i=notesData.findIndex(x=>x.id.toString()===id.toString());if(i!==-1)notesData[i]={...notesData[i],...d};renderList();google.script.run.updateNote(d);} closeEditModal();showToast("已儲存", "資料已更新", 'success'); }
+    
+    // Selection & Delete (Fixed Batch Bar Position)
+    function startLongPress(id) { longPressTimer = setTimeout(() => { isSelectionMode = true; toggleSelection(id.toString()); if(navigator.vibrate) navigator.vibrate(50); }, 500); }
+    function cancelLongPress() { clearTimeout(longPressTimer); }
+    function handleCardClick(e, note) { if (isSelectionMode) toggleSelection(note.id.toString()); else openEditModal(note); }
+    function toggleSelection(id) { if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id); if (selectedIds.size === 0) isSelectionMode = false; updateBatchUI(); renderList(); }
+    function exitSelectionMode() { isSelectionMode = false; selectedIds.clear(); updateBatchUI(); renderList(); }
+    function updateBatchUI() { 
+        const bar = document.getElementById('batch-bar'); 
+        const count = document.getElementById('selected-count'); 
+        if (isSelectionMode) { 
+            bar.classList.remove('hidden'); 
+            // Small delay to trigger transition
+            setTimeout(() => { bar.classList.remove('translate-y-20', 'opacity-0'); }, 10);
+            count.innerText = selectedIds.size; 
+        } else { 
+            bar.classList.add('translate-y-20', 'opacity-0');
+            setTimeout(() => { bar.classList.add('hidden'); }, 300);
+        }
+    }
+    function deleteSelected() { if(!confirm(`刪除 ${selectedIds.size} 筆?`)) return; const ids = Array.from(selectedIds); notesData = notesData.filter(n => !selectedIds.has(n.id.toString())); exitSelectionMode(); google.script.run.deleteNotes(ids); }
+    
+    function toggleSort() { sortType = sortType === 'DATE' ? 'PRIORITY' : 'DATE'; renderList(); }
+    function toggleShowDone() { showDone = !showDone; document.getElementById('btn-show-done').classList.toggle('text-blue-600', showDone); renderList(); }
+    function toggleDone(id) { const n=notesData.find(x=>x.id.toString()===id.toString()); if(n){ n.isDone=!n.isDone; renderList(); google.script.run.toggleDone(id, n.isDone); }}
+    function toggleTheme() { const d=document.documentElement.classList.toggle('dark'); localStorage.setItem('theme', d?'dark':'light'); document.getElementById('theme-icon').classList.replace(d?'fa-moon':'fa-sun', d?'fa-sun':'fa-moon'); }
+    function togglePinState() { isPinnedState=!isPinnedState; updatePinBtn(); }
+    function updatePinBtn() { document.getElementById('btn-pin').innerHTML = isPinnedState ? '<i class="fas fa-thumbtack text-blue-500"></i>' : '<i class="fas fa-thumbtack text-gray-400"></i>'; }
+    function setupGlobalKeys() { document.addEventListener('keydown', (e) => { if(e.key==='Escape'){closeEditModal();closeCalendarModal();exitSelectionMode();stopAlarm();} if(!document.getElementById('edit-modal').classList.contains('hidden')&&e.key==='Enter'&&!e.shiftKey&&e.target.tagName!=='TEXTAREA'){e.preventDefault();saveEdit();} }); }
+    function filterNotes() { renderList(); }
+  </script>
+</body>
+</html>
